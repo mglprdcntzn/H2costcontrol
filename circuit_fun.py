@@ -116,14 +116,14 @@ def print_circuit(nodes, lines, plt_name,indexes_reg,indexes_sol,indexes_hid,ind
     legendy = scale0y - 500
     
     ax.plot(legendx, legendy, 'o', color='brown')
-    ax.plot(legendx, legendy-200, 'o', color='orange')
-    ax.plot(legendx, legendy-400, 'o', color='blue')
-    ax.plot(legendx, legendy-600, 'o', color='black')
+    ax.plot(legendx, legendy-250, 'o', color='orange')
+    ax.plot(legendx, legendy-500, 'o', color='blue')
+    ax.plot(legendx, legendy-750, 'o', color='black')
     
     ax.text(legendx+70, legendy, ': Regulation nodes', fontsize=12, ha='left', va='center',color='black') 
-    ax.text(legendx+70, legendy-200, ': Photo-voltaic generation nodes', fontsize=12, ha='left', va='center',color='black') 
-    ax.text(legendx+70, legendy-400, ': Hydrogen production nodes', fontsize=12, ha='left', va='center',color='black') 
-    ax.text(legendx+70, legendy-600, ': Industrial load nodes', fontsize=12, ha='left', va='center',color='black') 
+    ax.text(legendx+70, legendy-250, ': Photo-voltaic generation nodes', fontsize=12, ha='left', va='center',color='black') 
+    ax.text(legendx+70, legendy-500, ': Hydrogen production nodes', fontsize=12, ha='left', va='center',color='black') 
+    ax.text(legendx+70, legendy-750, ': Industrial load nodes', fontsize=12, ha='left', va='center',color='black') 
     
     ax.set_frame_on(False)
     plt.tight_layout()
@@ -141,7 +141,7 @@ def create_tree_circuit(N, Dmean, Dmin):
 
     breakprob  = 0.5
 
-    maxangle   = 25*math.pi/180
+    maxangle   = 20*math.pi/180
     breakangle = 0
     std_dev    = (Dmean-Dmin)/2
     
@@ -151,7 +151,7 @@ def create_tree_circuit(N, Dmean, Dmin):
         ndes = ii + 1
         if random.random() < breakprob:
             nor        = random.randint(0, ndes-1)
-            breakangle = random.randint(0, 3)*90*math.pi/180
+            breakangle = random.choice([-1,0,1])*90*math.pi/180 # random.randint(0, 3)*90*math.pi/180
         # else:
         #     breakangle = 0
             
@@ -181,7 +181,7 @@ def create_tree_circuit(N, Dmean, Dmin):
                 break
             else:
                 nor        = random.randint(0, ndes-1)
-                breakangle = random.randint(0, 3)*90*math.pi/180
+                breakangle = random.choice([-1,0, 1])*90*math.pi/180 #random.randint(0, 3)*90*math.pi/180
                 
                 xor        = nodes[nor,0]
                 yor        = nodes[nor,1]
@@ -257,6 +257,8 @@ def intersected_lines(node,newxy,lines,nodes):
 #############################################################
 def choose_nodes(nodes, lines, NPV, Nsol, Nhid):
     N = nodes.shape[0] #number of nodes
+    #mean position of all nodes
+    Ex, Ey = np.mean(nodes, axis=0)
     #define a list of free nodes
     indexes_free  = list(set(range(N)))
     #find neighbours number
@@ -271,11 +273,16 @@ def choose_nodes(nodes, lines, NPV, Nsol, Nhid):
     #indexes of nodes with just one neigh
     indexes_lonely = list(set(np.where(neig_number == 1)[0]))
     indexes_free   = list(set(indexes_free) - set(indexes_lonely))
+    #reorder indexes from the furthest away to the closest to center
+    distances      = np.linalg.norm(nodes[indexes_lonely] - np.array([Ex, Ey]), axis=1)
+    indexes_lonely = [i for _, i in sorted(zip(distances, indexes_lonely), reverse=True)]
     #randomly choose regulation nodes with onlye 1 neigh
     if len(indexes_lonely)>=NPV:
-        indexes_reg    = random.sample(indexes_lonely, NPV)
+        # indexes_reg    = random.sample(indexes_lonely, NPV)
+        indexes_reg    = indexes_lonely[:NPV]
     else:
-        indexes_reg    = list(set(indexes_lonely) | set(random.sample(indexes_free, NPV-len(indexes_lonely) )))
+        # indexes_reg    = list(set(indexes_lonely) | set(random.sample(indexes_free, NPV-len(indexes_lonely) )))
+        indexes_reg    = indexes_lonely[:NPV-len(indexes_lonely)]
     
     indexes_free   = list(set(indexes_free) - set(indexes_reg))
     indexes_lonely = list(set(indexes_lonely) - set(indexes_reg))

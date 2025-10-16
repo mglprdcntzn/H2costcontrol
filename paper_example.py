@@ -16,7 +16,7 @@ import random
 #Circuit generator
 N = 50
 Dmin  = 250  #min distance btwn nodes
-Dmean = 500  #max distance btwn nodes
+Dmean = 750  #max distance btwn nodes
 V = 66  #in kV
 NPV   = 1 #regulation nodes
 NPQ   = N - NPV
@@ -77,6 +77,17 @@ barpv   = pv / S
 diagbarY0 = np.diag(barY0.flatten())
 ########################################################
 ct.print_circuit(nodes, lines, 'example_circuit',indexes_reg,indexes_sol,indexes_hid,indexes_lds)
+print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
+print("Circuit summary")
+print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
+print(f"Nominal Voltage: {V:.1f} kV.")
+print(f"Total nodes: {N}.")
+print(f"Hydrogen nodes: {Nhid}.")
+print(f"Hydrogen Installed capacity: {S*installed[indexes_hid].sum():.0f} kVA.")
+print(f"PV nodes: {Nsol}.")
+print(f"PV Installed capacity: {S*installed[indexes_sol].sum():.0f} kVA.")
+print(f"Load nodes: {Nlds}.")
+print(f"Load max capacity: {S*installed[indexes_lds].sum():.0f} kVA.")
 ########################################################
 #define time
 t0 =-0.0*24*60  #begining of time in min
@@ -129,28 +140,35 @@ delay1     = np.random.randint(1,n1,Nhid)
 T1real     = ctrlsteps1.reshape((Nhid,1))*T
 ########################################################
 #Market constants
-pH2  = 5
+pH2     = 5
 ########################################################
 #Regulation control gains.
-P0ref  = 1.00*np.sum(installed[indexes_lds])
+P0ref   = 1.00*np.sum(installed[indexes_lds])
 
 eant    = np.zeros((NPV,1))
 eantant = np.zeros((NPV,1))
 
 K = 3
-L = 24
-
-c = 1/60
-
+L = 21
+c = 1/40 #1/25
 ########################################################
 #H2 Control gains
-etamin  = 0.40
+etamin  = 0.60
 eta     = etamin + (1-etamin)*np.random.rand(Nhid)
 
-longeta = np.zeros((N,1))
+longeta              = np.zeros((N,1))
 longeta[indexes_hid] = eta.reshape(Nhid,1)
-longeta = longeta[NPV:]
-
+longeta              = longeta[NPV:]
+########################################################
+print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
+print("Market and control constants")
+print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
+print(f"H2 market price: {pH2:.4f} $.")
+print(f"H2 min efficience: {etamin:.4f}.")
+print(f"Constant price period: {T0:.1f} min.")
+print(f"  K = {K:.1f}")
+print(f"  L = {L:.1f}")
+print(f"  c = {c:.6f}")
 ########################################################
 # H2 linear cost
 print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
@@ -190,7 +208,7 @@ baryLoadold = np.zeros((NPQ, 1), dtype=complex)
 suniiold    = np.zeros((NPQ, 1))
 
 cH2       = np.zeros((NPV,nn+1))
-cH2old    = 0.0
+cH2old    = 0.0003
 
 fpkkold = 0.90
 
@@ -212,7 +230,7 @@ for kk in range(nn):
     tt = t[kk]
     if np.abs(tt) <= T/2:
         kinit = kk
-    print(f'\033[KProgreso: {int(np.round(100*kk/nn))}%            ', end='\r', flush=True)
+    print(f'\033[KProgress: {int(np.round(100*kk/nn))}%            ', end='\r', flush=True)
     ##################################
     # Voltage at regulation nodes
     for node in indexes_reg:
@@ -234,7 +252,6 @@ for kk in range(nn):
         P_Sun[ii,kk]  = max(0,sunii)
         Q_Sun[ii,kk]  = max(0,sunii*np.sqrt(fpSii**-2 -1))
     P_Sun_tot = np.sum(P_Sun[:,kk])
-               
     ##################################
     # Loads
     for node in indexes_lds:
@@ -253,7 +270,6 @@ for kk in range(nn):
         sssii  = pppii + 1j*qqqii
         
         baryLoad[ii,kk] = np.conj(sssii)#divided by square nominal V=1
-    
     ##################################
     # Hydrogen production
     for node in indexes_hid:
@@ -311,7 +327,6 @@ for kk in range(nn):
             #update old Preq
             uuoldold      = uuold
             uuold         = uunew
-            
     #################################
     # Cost control at H2 nodes
     for ii in range(Nhid):
@@ -327,9 +342,7 @@ for kk in range(nn):
                 P_Hyd_ref[node] = 0
                     
             cant[ii]        = ckk
-
 print(' ')
-print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
 ########################################################
 #sunny hours
 totalPVgen = np.sum(P_Sun[np.array(indexes_sol)-NPV,:],axis=0)
@@ -382,10 +395,10 @@ for ii in range(len(sunny)):
 fig, axes = plt.subplots(1,2,figsize=(15 * 2 / 2.54, 10 * 2 / 2.54))
 
 axes[0].plot(t / 60, np.transpose(S*P_lds[np.array(indexes_lds)-NPV,:]))
-axes[0].set_title('Power load kW')
+axes[0].set_title('Power load (kW)')
 
 axes[1].plot(t / 60, np.transpose(S*P_Sun[np.array(indexes_sol)-NPV,:]))
-axes[1].set_title('PV injected power kW')
+axes[1].set_title('Photovoltaic injected power (kW)')
 
 
 for ax in axes.flat:
@@ -412,10 +425,10 @@ fig, axes = plt.subplots(1,2,figsize=(15 * 2 / 2.54, 10 * 2 / 2.54))
 
 axes[0].plot(t / 60, np.transpose(S*np.real(barS0)))
 axes[0].plot(np.array([t[0],t[-1]]) / 60, S*P0ref*np.array([1,1]))
-axes[0].set_title('Regulation injected power kW')
+axes[0].set_title('Regulation injected power (kW)')
 
 axes[1].plot(t / 60, np.transpose(S*P_Hyd[np.array(indexes_hid)-NPV,:]))
-axes[1].set_title('H2 consumed power kW')
+axes[1].set_title('Hydrogen consumed power (kW)')
 
 for ax in axes.flat:
     ax.set_xlim(0, t[-1]/60)
@@ -440,10 +453,10 @@ fig.savefig(file_name+'.eps', format='eps', bbox_inches='tight')
 fig, axes = plt.subplots(1,2,figsize=(15 * 2 / 2.54, 10 * 2 / 2.54))
 
 axes[0].plot(t / 60, np.transpose(abs(ve[np.array(indexes_hid)-NPV,:])))
-axes[0].set_title('Voltage at H2 nodes')
+axes[0].set_title('Voltage at Hydrogen nodes (p.u.)')
 
 axes[1].plot(t / 60, np.transpose(np.angle(ve[np.array(indexes_hid)-NPV,:])))
-axes[1].set_title('Angle at H2 nodes')
+axes[1].set_title('Angle at Hydrogen nodes (p.u.)')
 
 for ax in axes.flat:
     ax.set_xlim(0, t[-1]/60)
@@ -483,7 +496,7 @@ P_Hyd_ref  = np.zeros((NPQ, 1))
 fp_Hyd_ref = 0.99*np.ones((NPQ, 1))
 
 cH2       = np.zeros((NPV,nn+1))
-cH2old    = 0.0
+cH2old    = 0.000
 
 uu       = np.zeros((NPV,nn+1))
 uuold    = 0.0
@@ -509,7 +522,7 @@ for kk in range(nn):
     tt = t[kk]
     if np.abs(tt) <= T/2:
         kinit = kk
-    print(f'\033[KProgreso: {int(np.round(100*kk/nn))}%            ', end='\r', flush=True)
+    print(f'\033[KProgress: {int(np.round(100*kk/nn))}%            ', end='\r', flush=True)
     ##################################
     # Hydrogen production
     for node in indexes_hid:
@@ -600,7 +613,6 @@ for kk in range(nn):
             uuold         = uunew
             Duuold        = Duu
             eant          = ekk
-            
     #################################
     # Cost control at H2 nodes
     for ii in range(Nhid):
@@ -611,13 +623,12 @@ for kk in range(nn):
             
             P_Hyd_ref[node] = 0.5*pH2*eta[ii]/(rho*T0*S)
             cant[ii]        = rho
-
 print(' ')
-print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
 ########################################################
 #LMI stability analysis from an estimation of aaa
 aaa0    = np.real(aaa[t>0]).mean()
-epsilon = 0.001*np.abs(aaa0)
+epsilon = 0.100*np.abs(aaa0)
+epdraw  = 0.001*np.abs(aaa0)
 
 GGG0 = np.block( [[0,1],[-aaa0*K, -aaa0*L]]  )
 mmm  = np.block( [[0],[1]]  )
@@ -640,14 +651,17 @@ constraints = [
 prob = cp.Problem(cp.Minimize(cp.trace(PPP)), constraints)
 
 prob.solve(solver=cp.SCS)
-
+print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
+print("LMI convergence test")
+print(f"  aaa0 = {aaa0:.5f}")
+print(f"  epsilon/aaa0 = {epsilon/aaa0:.5f}")
+print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
 print("Status:", prob.status)
 print("P =", PPP.value)
 print("alfa =", alfa.value)
 
 print("eig(P) =", np.linalg.eigvals(PPP.value) )
 print("eig(G0) =", np.linalg.eigvals(GGG0) )
-
 print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
 ########################################################
 #plot quantities
@@ -657,10 +671,10 @@ fig, axes = plt.subplots(1,2,figsize=(15 * 2 / 2.54, 10 * 2 / 2.54))
 
 axes[0].plot(t / 60, np.transpose(S*np.real(barS0)))
 axes[0].plot(np.array([t[0],t[-1]]) / 60, S*P0ref*np.array([1,1]))
-axes[0].set_title('Regulation injected power kW')
+axes[0].set_title('Regulation injected power (kW)')
 
 axes[1].plot(t / 60, np.transpose(cH2[0,:-1]))
-axes[1].set_title('Communication parameter rho')
+axes[1].set_title(r'Cost parameter $\rho$')
 
 for ax in axes.flat:
     ax.set_xlim(0, t[-1]/60)
@@ -685,10 +699,10 @@ fig.savefig(file_name+'.eps', format='eps', bbox_inches='tight')
 fig, axes = plt.subplots(1,2,figsize=(15 * 2 / 2.54, 10 * 2 / 2.54))
 
 axes[0].plot(t / 60, np.transpose(S*P_Hyd[np.array(indexes_hid)-NPV,:]))
-axes[0].set_title('H2 consumed power kW')
+axes[0].set_title('Hydrogen consumed power (kW)')
 
-axes[1].plot(t / 60, np.transpose(U_Hyd[np.array(indexes_hid)-NPV,:-1]))
-axes[1].set_title('H2 production utility')
+axes[1].plot(t / 60, np.transpose(U_Hyd[np.array(indexes_hid)-NPV,:-1])/1e6)
+axes[1].set_title(r'Hydrogen production utility ($M\$ $)')
 
 for ax in axes.flat:
     ax.set_xlim(0, t[-1]/60)
@@ -713,11 +727,10 @@ fig.savefig(file_name+'.eps', format='eps', bbox_inches='tight')
 fig, axes = plt.subplots(1,2,figsize=(15 * 2 / 2.54, 10 * 2 / 2.54))
 
 axes[0].plot(t / 60, np.transpose(abs(ve[np.array(indexes_hid)-NPV,:])))
-axes[0].set_title('Voltage at H2 nodes')
+axes[0].set_title('Voltage at Hydrogen nodes (p.u.)')
 
 axes[1].plot(t / 60, np.transpose(np.angle(ve[np.array(indexes_hid)-NPV,:])))
-axes[1].set_title('Angle at H2 nodes')
-
+axes[1].set_title('Angle at Hydrogen nodes (p.u.)')
 
 for ax in axes.flat:
     ax.set_xlim(0, t[-1]/60)
@@ -740,12 +753,15 @@ fig, axes = plt.subplots(1,2,figsize=(15 * 2 / 2.54, 10 * 2 / 2.54))
 
 axes[0].plot(t[t>0] / 60, np.transpose(np.real(aaa[t>0])))
 axes[0].plot(np.array([t[0],t[-1]]) / 60, np.real(aaa0.flatten())*np.array([1,1]), linestyle='--',color='red')
-axes[0].plot(np.array([t[0],t[-1]]) / 60, np.real(aaa0+ epsilon).flatten()*np.array([1,1]), linestyle=':',color='red')
-axes[0].plot(np.array([t[0],t[-1]]) / 60, np.real(aaa0- epsilon).flatten()*np.array([1,1]), linestyle=':',color='red')
-axes[0].set_title('real a')
+axes[0].plot(np.array([t[0],t[-1]]) / 60, np.real(aaa0+ epdraw).flatten()*np.array([1,1]), linestyle=':',color='red')
+axes[0].plot(np.array([t[0],t[-1]]) / 60, np.real(aaa0- epdraw).flatten()*np.array([1,1]), linestyle=':',color='red')
+axes[0].set_title(r'$a$')
+
+axes[0].text(16, aaa0+ epdraw*1.3,  f"(1 + {epdraw*100/aaa0:.2f}%) $a_0$", fontsize=12, color='red', ha='left', va='bottom', rotation=0)
+axes[0].text(16, aaa0- epdraw*1.3,  f"(1 - {epdraw*100/aaa0:.2f}%) $a_0$", fontsize=12, color='red', ha='left', va='top', rotation=0)
 
 axes[1].plot(t[t>0][:-1] / 60, np.transpose(np.diff(np.real(aaa[t>0])/T)))
-axes[1].set_title('d real a')
+axes[1].set_title(r'$da$')
 
 for ax in axes.flat:
     ax.set_xlim(0, t[-1]/60)
@@ -769,10 +785,10 @@ fig.savefig(file_name+'.eps', format='eps', bbox_inches='tight')
 fig, axes = plt.subplots(1,2,figsize=(15 * 2 / 2.54, 10 * 2 / 2.54))
 
 axes[0].plot(t[t>0] / 60, np.transpose(np.real(bbb[t>0])))
-axes[0].set_title('real b')
+axes[0].set_title(r'$b$')
 
 axes[1].plot(t[t>0][:-1] / 60, np.transpose(np.diff(np.real(bbb[t>0])/T)))
-axes[1].set_title('real db')
+axes[1].set_title(r'$db$')
 
 for ax in axes.flat:
     ax.set_xlim(0, t[-1]/60)
