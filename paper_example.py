@@ -14,19 +14,19 @@ import random
 
 ########################################################
 #Circuit generator
-N = 50
-Dmin  = 250  #min distance btwn nodes
+N = 40
+Dmin  = 450  #min distance btwn nodes
 Dmean = 750  #max distance btwn nodes
 V = 66  #in kV
 NPV   = 1 #regulation nodes
 NPQ   = N - NPV
 
 nodes, lines = ct.create_tree_circuit(N, Dmean, Dmin)
-lines        = ct.add_loops_to_circuit(nodes, lines, Dmean, Dmin)
+# lines        = ct.add_loops_to_circuit(nodes, lines, Dmean, Dmin)
 ########################################################
 #nodes classification (regulation, solar, hydrogen, load)
-Nsol          = 15
-Nhid          = 17
+Nsol          = 11
+Nhid          = 14
 
 #choose which nodes are reg, sun, hid, and lds 
 indexes_reg, indexes_hid, indexes_sol, indexes_lds = ct.choose_nodes(nodes, lines, NPV, Nsol, Nhid)
@@ -63,7 +63,7 @@ profilesatnodes                = np.zeros((N,Nprofiles))
 profilesatnodes[indexes_lds,:] = loadmix.reshape((Nlds,Nprofiles))
 
 #impendances of the circuit
-Y, Y0, Y00    = ct.impendances_circuit(lines, N, NPV)
+Y, Y0, Y00, lines_info   = ct.impendances_circuit(lines, N, NPV)
 Ybase         = S / (V**2) / 1000  #divide by 1000 to obtain Ybase in Ohms
 ########################################################
 #normalized circuit
@@ -75,6 +75,8 @@ barLoad = load / S
 barpv   = pv / S
 
 diagbarY0 = np.diag(barY0.flatten())
+
+# lines_info[:,2] = lines_info[:,2] * Ybase
 ########################################################
 ct.print_circuit(nodes, lines, 'example_circuit',indexes_reg,indexes_sol,indexes_hid,indexes_lds)
 print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
@@ -145,11 +147,14 @@ pH2     = 5
 #Regulation control gains.
 P0ref   = 1.00*np.sum(installed[indexes_lds])
 
+P0band = 0.025 #for settling time
+tmax= 3*60 #for settling time
+
 eant    = np.zeros((NPV,1))
 eantant = np.zeros((NPV,1))
 
-K = 3
-L = 21
+K = 3#3
+L = 21#21
 c = 1/40 #1/25
 ########################################################
 #H2 Control gains
@@ -198,6 +203,8 @@ SunIrrprofiles = np.zeros((Nprofiles, nn))
 
 P_Hyd_ref  = np.zeros((NPQ, 1))
 fp_Hyd_ref = 0.99*np.ones((NPQ, 1))
+
+U_Hyd     = np.zeros((NPQ, nn+1))
 
 fp_Sol_ref = 0.99*np.ones((NPQ, 1))
 
@@ -283,7 +290,9 @@ for kk in range(nn):
         Pnew          = max(0,Pnew)        
         
         P_Hyd[ii,kk]  = Pnew
-        Q_Hyd[ii,kk]  = P_Hyd[ii,kk]*np.sqrt(fpSii**-2 - 1)    
+        Q_Hyd[ii,kk]  = P_Hyd[ii,kk]*np.sqrt(fpSii**-2 - 1)
+        
+        U_Hyd[ii,kk+1] = U_Hyd[ii,kk] + (eta[ii]*pH2 - cH2[0,kk] )*S*P_Hyd[ii,kk]*T
     ##################################
     # Define quantities for NR
     barYload = np.diag(baryLoad[:,kk].flatten())
@@ -424,7 +433,9 @@ fig.savefig(file_name+'.eps', format='eps', bbox_inches='tight')
 fig, axes = plt.subplots(1,2,figsize=(15 * 2 / 2.54, 10 * 2 / 2.54))
 
 axes[0].plot(t / 60, np.transpose(S*np.real(barS0)))
-axes[0].plot(np.array([t[0],t[-1]]) / 60, S*P0ref*np.array([1,1]))
+axes[0].plot(np.array([t[0],t[-1]]) / 60, S*P0ref*np.array([1,1]), linestyle='--',color='red')
+# axes[0].plot(np.array([t[0],t[-1]]) / 60, S*P0ref*(1+P0band)*np.array([1,1]), linestyle=':',color='red')
+# axes[0].plot(np.array([t[0],t[-1]]) / 60, S*P0ref*(1-P0band)*np.array([1,1]), linestyle=':',color='red')
 axes[0].set_title('Regulation injected power (kW)')
 
 axes[1].plot(t / 60, np.transpose(S*P_Hyd[np.array(indexes_hid)-NPV,:]))
@@ -473,6 +484,31 @@ for ax in axes.flat:
     for rr in sun_range:
         ax.axvspan(rr[0], rr[1], facecolor='#fffff0')
 fig.tight_layout()
+
+########################################################
+# performance indicators
+print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
+error           = S*(np.real(barS0) - P0ref)
+errorRMS_lineal = np.sqrt(np.mean(error**2))
+print("error RMS lineal [kW]=", errorRMS_lineal )
+
+total_utility_lineal = np.sum(U_Hyd[np.array(indexes_hid)-NPV,-1]/1e6)
+print("Total utility [M$]=", total_utility_lineal )
+
+vH2min = np.min(np.abs(ve[np.array(indexes_hid)-NPV,:]),axis=0)
+mean_vH2min_lineal = np.mean(vH2min)
+rms_vH2min_lineal = np.sqrt(np.mean(vH2min**2))
+print("Minimum H2 voltage [p.u.] mean=", mean_vH2min_lineal )
+print("Minimum H2 voltage [p.u.] rms=", rms_vH2min_lineal )
+
+P000 = np.real(barS0[0,t<tmax])
+ts_lineal, idx, lower, upper = tm.settling_time(
+    P000,
+    P0ref,
+    dt=T,
+    band=P0band
+)
+print("Settling tim [min]=", ts_lineal )
 ########################################################
 # H2 convex cost
 print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
@@ -577,7 +613,7 @@ for kk in range(nn):
         
     IIIXXX = np.block([[np.eye(NPQ,NPQ) + 1j*XXX],[ np.eye(NPQ,NPQ) - 1j*XXX]])
     
-    aaa[kk] = -0.5*pH2*mmm@IIIXXX@longeta/(c*T*S)
+    aaa[kk] = -0.5*pH2*mmm@IIIXXX@longeta/(c*T0*S)
     
     dbarS = (barS - barSant)@np.ones((NPQ,1))/T
     if kk==0:
@@ -627,9 +663,14 @@ print(' ')
 ########################################################
 #LMI stability analysis from an estimation of aaa
 aaa0    = np.real(aaa[t>0]).mean()
-epsilon = 0.100*np.abs(aaa0)
+epsilon = 0.100*np.abs(aaa0) #10%
 epdraw  = 0.001*np.abs(aaa0)
-
+print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
+print("LMI convergence test")
+print(f"  aaa0 = {aaa0:.5f}")
+print(f"  epsilon/aaa0 = {epsilon/aaa0:.5f}")
+print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
+#continous time analysis
 GGG0 = np.block( [[0,1],[-aaa0*K, -aaa0*L]]  )
 mmm  = np.block( [[0],[1]]  )
 nnn  = np.block( [[-K],[-L]]  )
@@ -643,19 +684,15 @@ MMM   = cp.bmat([
 ])
 
 constraints = [
-    alfa >> 1e-2,   # alfa ≻ 0
-    PPP  >> 1e-1 * np.eye(nP),   # P ≻ 0
+    alfa >> 1e-6,   # alfa ≻ 0
+    PPP  >> 1e-6 * np.eye(nP),   # P ≻ 0
     MMM  << -1e-6 * np.eye(nP+1) # LMI condition
 ]
 # prob = cp.Problem(cp.Minimize(0), constraints)
 prob = cp.Problem(cp.Minimize(cp.trace(PPP)), constraints)
 
 prob.solve(solver=cp.SCS)
-print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
-print("LMI convergence test")
-print(f"  aaa0 = {aaa0:.5f}")
-print(f"  epsilon/aaa0 = {epsilon/aaa0:.5f}")
-print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
+
 print("Status:", prob.status)
 print("P =", PPP.value)
 print("alfa =", alfa.value)
@@ -663,6 +700,38 @@ print("alfa =", alfa.value)
 print("eig(P) =", np.linalg.eigvals(PPP.value) )
 print("eig(G0) =", np.linalg.eigvals(GGG0) )
 print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
+#discrete time analysis
+T000 = T0
+HHH0 = np.block( [[2-aaa0*T000*(T000*K +L), -1+aaa0*L*T000],[1, 0]]  )
+mmm  = np.block( [[1],[0]]  )
+nnn  = np.block( [[-T000*(T000*K + L)],[L*T000]]  )
+
+nP    = HHH0.shape[0]
+QQQ   = cp.Variable((nP, nP), symmetric=True)
+beta  = cp.Variable((1,1),nonneg=True)
+ZZZ   = np.zeros((nP,1))
+MMM   = cp.bmat([
+    [-QQQ + (epsilon**2)*beta*(nnn@nnn.T),  HHH0.T@QQQ, ZZZ ],
+    [ QQQ@HHH0, -QQQ, QQQ@mmm],
+    [ZZZ.T, mmm.T@QQQ, -beta]
+])
+
+constraints = [
+    beta >> 1e-6,   # beta ≻ 0
+    QQQ  >> 1e-6 * np.eye(nP),   # Q ≻ 0
+    MMM  << -1e-6 * np.eye(2*nP+1) # LMI condition
+]
+# prob = cp.Problem(cp.Minimize(0), constraints)
+prob = cp.Problem(cp.Minimize(cp.trace(QQQ)), constraints)
+
+prob.solve(solver=cp.SCS)
+
+print("Status:", prob.status)
+print("Q =", QQQ.value)
+print("beta =", beta.value)
+
+print("eig(Q) =", np.linalg.eigvals(QQQ.value) )
+print("eig(H0) =", np.linalg.eigvals(HHH0) )
 ########################################################
 #plot quantities
 ########################################################
@@ -670,11 +739,14 @@ print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
 fig, axes = plt.subplots(1,2,figsize=(15 * 2 / 2.54, 10 * 2 / 2.54))
 
 axes[0].plot(t / 60, np.transpose(S*np.real(barS0)))
-axes[0].plot(np.array([t[0],t[-1]]) / 60, S*P0ref*np.array([1,1]))
+axes[0].plot(np.array([t[0],t[-1]]) / 60, S*P0ref*np.array([1,1]), linestyle='--',color='red')
+axes[0].plot(np.array([t[0],t[-1]]) / 60, S*P0ref*(1+P0band)*np.array([1,1]), linestyle=':',color='red')
+axes[0].plot(np.array([t[0],t[-1]]) / 60, S*P0ref*(1-P0band)*np.array([1,1]), linestyle=':',color='red')
 axes[0].set_title('Regulation injected power (kW)')
 
-axes[1].plot(t / 60, np.transpose(cH2[0,:-1]))
-axes[1].set_title(r'Cost parameter $\rho$')
+axes[1].plot(t / 60, np.transpose(np.real(barS0)/np.abs(barS0)))
+axes[1].set_title('Regulation injected power factor')
+axes[1].set_ylim(0.90, 0.94)
 
 for ax in axes.flat:
     ax.set_xlim(0, t[-1]/60)
@@ -729,8 +801,11 @@ fig, axes = plt.subplots(1,2,figsize=(15 * 2 / 2.54, 10 * 2 / 2.54))
 axes[0].plot(t / 60, np.transpose(abs(ve[np.array(indexes_hid)-NPV,:])))
 axes[0].set_title('Voltage at Hydrogen nodes (p.u.)')
 
-axes[1].plot(t / 60, np.transpose(np.angle(ve[np.array(indexes_hid)-NPV,:])))
-axes[1].set_title('Angle at Hydrogen nodes (p.u.)')
+axes[1].plot(t / 60, np.transpose(cH2[0,:-1]))
+axes[1].set_title(r'Price coefficient $\rho$')
+
+# axes[1].plot(t / 60, np.transpose(np.angle(ve[np.array(indexes_hid)-NPV,:])))
+# axes[1].set_title('Angle at Hydrogen nodes (p.u.)')
 
 for ax in axes.flat:
     ax.set_xlim(0, t[-1]/60)
@@ -747,6 +822,9 @@ for ax in axes.flat:
     for rr in sun_range:
         ax.axvspan(rr[0], rr[1], facecolor='#fffff0')
 fig.tight_layout()
+
+file_name = 'ex_convex_volt'
+fig.savefig(file_name+'.eps', format='eps', bbox_inches='tight')
 ########################################################
 #matrix analysis
 fig, axes = plt.subplots(1,2,figsize=(15 * 2 / 2.54, 10 * 2 / 2.54))
@@ -755,10 +833,10 @@ axes[0].plot(t[t>0] / 60, np.transpose(np.real(aaa[t>0])))
 axes[0].plot(np.array([t[0],t[-1]]) / 60, np.real(aaa0.flatten())*np.array([1,1]), linestyle='--',color='red')
 axes[0].plot(np.array([t[0],t[-1]]) / 60, np.real(aaa0+ epdraw).flatten()*np.array([1,1]), linestyle=':',color='red')
 axes[0].plot(np.array([t[0],t[-1]]) / 60, np.real(aaa0- epdraw).flatten()*np.array([1,1]), linestyle=':',color='red')
-axes[0].set_title(r'$a$')
+axes[0].set_title(r'$a = a_0 + \Delta a$')
 
-axes[0].text(16, aaa0+ epdraw*1.3,  f"(1 + {epdraw*100/aaa0:.2f}%) $a_0$", fontsize=12, color='red', ha='left', va='bottom', rotation=0)
-axes[0].text(16, aaa0- epdraw*1.3,  f"(1 - {epdraw*100/aaa0:.2f}%) $a_0$", fontsize=12, color='red', ha='left', va='top', rotation=0)
+axes[0].text(16, aaa0+ epdraw*1.3,  f"(1 + {epdraw/aaa0:.3f}) $a_0$", fontsize=12, color='red', ha='left', va='bottom', rotation=0)
+axes[0].text(16, aaa0- epdraw*1.3,  f"(1 - {epdraw/aaa0:.3f}) $a_0$", fontsize=12, color='red', ha='left', va='top', rotation=0)
 
 axes[1].plot(t[t>0][:-1] / 60, np.transpose(np.diff(np.real(aaa[t>0])/T)))
 axes[1].set_title(r'$da$')
@@ -782,6 +860,7 @@ fig.tight_layout()
 file_name = 'matrixanalysis'
 fig.savefig(file_name+'.eps', format='eps', bbox_inches='tight')
 
+########################################################
 fig, axes = plt.subplots(1,2,figsize=(15 * 2 / 2.54, 10 * 2 / 2.54))
 
 axes[0].plot(t[t>0] / 60, np.transpose(np.real(bbb[t>0])))
@@ -805,3 +884,316 @@ for ax in axes.flat:
     for rr in sun_range:
         ax.axvspan(rr[0], rr[1], facecolor='#fffff0')
 fig.tight_layout()
+########################################################
+# performance indicators
+print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
+error           = S*(np.real(barS0) - P0ref)
+errorRMS_convex = np.sqrt(np.mean(error**2))
+print("error RMS convex [kW]=", errorRMS_convex )
+
+total_utility_convex = np.sum(U_Hyd[np.array(indexes_hid)-NPV,-1]/1e6)
+print("Total utility [M$]=", total_utility_convex )
+
+vH2min = np.min(np.abs(ve[np.array(indexes_hid)-NPV,:]),axis=0)
+mean_vH2min_convex = np.mean(vH2min)
+rms_vH2min_convex = np.sqrt(np.mean(vH2min**2))
+print("Minimum H2 voltage [p.u.] mean=", mean_vH2min_convex )
+print("Minimum H2 voltage [p.u.] rms=", rms_vH2min_convex )
+
+P000 = np.real(barS0[0,t<tmax])
+ts_convex, idx, lower, upper = tm.settling_time(
+    P000,
+    P0ref,
+    dt=T,
+    band=P0band
+)
+print("Settling tim [min]=", ts_convex )
+
+########################################################
+# Alternative baseline
+print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
+print("Baseline ctrl")
+print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
+########################################################
+#initial conditions for NR iterations on PQ nodes
+Vinic = R0 @ expm(1j * Phi0)
+########################################################
+#prefill vectors and matrices
+ve        = np.zeros((NPQ, nn), dtype=complex) #voltage at PQ nodes
+
+barS0     = np.zeros((NPV, nn), dtype=complex)
+
+P_lds     = np.zeros((NPQ, nn))
+P_Hyd     = np.zeros((NPQ, nn))
+Q_lds     = np.zeros((NPQ, nn))
+Q_Hyd     = np.zeros((NPQ, nn))
+
+P_Hyd_ref  = np.zeros((NPQ, 1))
+fp_Hyd_ref = 0.99*np.ones((NPQ, 1))
+
+cH2       = 2 #fixed cost
+cH2old    = 0.000
+
+uu       = np.zeros((NPV,nn+1))
+uuold    = 0.0
+uuoldold = uuold*1
+Duu      = 0.0
+Duuold   = Duu*1
+
+cant    = np.zeros((Nhid,1))
+cantant = np.zeros((Nhid,1))
+ekk     = 0
+
+E_Hyd     = np.zeros((NPQ, nn+1))
+U_Hyd     = np.zeros((NPQ, nn+1))
+
+XXX        = np.zeros((NPQ,NPQ))
+aaa        = np.zeros(nn, dtype=complex)
+bbb        = np.zeros(nn, dtype=complex)
+########################################################
+#loop through time
+for kk in range(nn):
+    ##################################
+    # instante
+    tt = t[kk]
+    if np.abs(tt) <= T/2:
+        kinit = kk
+    print(f'\033[KProgress: {int(np.round(100*kk/nn))}%            ', end='\r', flush=True)
+    ##################################
+    # Hydrogen production
+    for node in indexes_hid:
+        ii            = node - NPV
+        Sinstall      = installed[node]
+        
+        fpSii         = fp_Hyd_ref[ii]
+        
+        Pnew          = P_Hyd_ref[ii]
+        Pnew          = min(Sinstall,Pnew)
+        Pnew          = max(0,Pnew)
+        
+        XXX[ii,ii]    = np.sqrt(fpSii**-2 - 1)
+        
+        P_Hyd[ii,kk]  = Pnew
+        Q_Hyd[ii,kk]  = P_Hyd[ii,kk]*XXX[ii,ii]
+        
+        E_Hyd[ii,kk+1] = E_Hyd[ii,kk] + eta[ii]*P_Hyd[ii,kk]*T
+        U_Hyd[ii,kk+1] = U_Hyd[ii,kk] + (eta[ii]*pH2 - cH2 )*S*P_Hyd[ii,kk]*T
+    ##################################
+    # Define quantities for NR
+    barYload = np.diag(baryLoad[:,kk].flatten())
+    barSant  = barS
+    barS     = np.diag(P_Sun[:,kk]+1j*Q_Sun[:,kk] - P_Hyd[:,kk] - 1j*Q_Hyd[:,kk]  )
+    h0       = (np.conj(barY0)@ve0[:,kk]).reshape((NPQ,1))
+    #################################
+    # NR for voltage in PQ nodes
+    vvv      = tm.NRI(barY, h0, barS, barYload, Vinic, itmax, prec)
+    ve[:,kk] = vvv*1
+    VVV      = np.diag(vvv)
+    Vinic    = VVV*1
+    #################################
+    # Powers depending on voltages
+    Sload       = VVV@np.conj(barYload@vvv)
+    P_lds[:,kk] = np.real(Sload)
+    Q_lds[:,kk] = np.imag(Sload)
+    
+    V0          = np.diag(ve0[:,kk])
+    barS0[:,kk] = V0@np.conj(barY00@ve0[:,kk]) + V0@np.conj(barY0.T@vvv)
+    #################################
+    # Cost control at regulation nodes
+    for ii in range(NPV):
+        node            = indexes_reg[ii]
+        uu[node,kk+1]   = uuold
+        
+        rr0 = (kk-delay0[ii])%ctrlsteps0[ii]
+        if rr0 == 0:
+            Skk          = barS0[node,kk]
+            Pkk          = np.real(Skk)
+            
+            ekk          = P0ref-Pkk
+            De           = ekk - eant
+            
+            Duu          = uuold-uuoldold
+            
+            uunew        = uuold + 0.004*(T0**2)*K*ekk
+                        
+            #communicate as cost
+            uu[node,kk+1]  = uunew
+            
+            #update old Preq
+            uuoldold      = uuold
+            uuold         = uunew
+            Duuold        = Duu
+            eant          = ekk
+    #################################
+    # production imposition at hyd nodes
+    for ii in range(Nhid):
+        rr1 = (kk-delay1[ii])%ctrlsteps1[ii]
+        rho = uu[0,kk]
+        
+        node            = indexes_hid[ii] - NPV
+            
+        P_Hyd_ref[node] = rho/Nhid #equally shared
+        
+print(' ')
+########################################################
+#plot quantities
+########################################################
+#Regulation
+fig, axes = plt.subplots(1,2,figsize=(15 * 2 / 2.54, 10 * 2 / 2.54))
+
+axes[0].plot(t / 60, np.transpose(S*np.real(barS0)))
+axes[0].plot(np.array([t[0],t[-1]]) / 60, S*P0ref*np.array([1,1]), linestyle='--',color='red')
+axes[0].plot(np.array([t[0],t[-1]]) / 60, S*P0ref*(1+P0band)*np.array([1,1]), linestyle=':',color='red')
+axes[0].plot(np.array([t[0],t[-1]]) / 60, S*P0ref*(1-P0band)*np.array([1,1]), linestyle=':',color='red')
+axes[0].set_title('Regulation injected power (kW)')
+
+axes[1].plot(t / 60, np.transpose(abs(ve[np.array(indexes_hid)-NPV,:])))
+axes[1].set_title('Voltage at Hydrogen nodes (p.u.)')
+
+for ax in axes.flat:
+    ax.set_xlim(0, t[-1]/60)
+    
+    ax.xaxis.set_major_locator(FixedLocator(custom_ticks))
+    ax.grid(True, which='major', linestyle='-', linewidth=0.75, color='gray')
+    ax.xaxis.set_minor_locator(FixedLocator(minor_ticks))
+    ax.grid(True, which='minor', linestyle=':', linewidth=0.75, color='gray')
+    
+    ax.set_xticks(custom_ticks)
+    ax.set_xticklabels(custom_labels)
+    ax.set_xlabel('Day Time (hrs)')
+    
+    for rr in sun_range:
+        ax.axvspan(rr[0], rr[1], facecolor='#fffff0')
+fig.tight_layout()
+
+file_name = 'ex_imposed_P0_rho'
+fig.savefig(file_name+'.eps', format='eps', bbox_inches='tight')
+########################################################
+#H2
+fig, axes = plt.subplots(1,2,figsize=(15 * 2 / 2.54, 10 * 2 / 2.54))
+
+axes[0].plot(t / 60, np.transpose(S*P_Hyd[np.array(indexes_hid)-NPV,:]))
+axes[0].set_title('Hydrogen consumed power (kW)')
+
+axes[1].plot(t / 60, np.transpose(U_Hyd[np.array(indexes_hid)-NPV,:-1])/1e6)
+axes[1].set_title(r'Hydrogen production utility ($M\$ $)')
+
+for ax in axes.flat:
+    ax.set_xlim(0, t[-1]/60)
+    
+    ax.xaxis.set_major_locator(FixedLocator(custom_ticks))
+    ax.grid(True, which='major', linestyle='-', linewidth=0.75, color='gray')
+    ax.xaxis.set_minor_locator(FixedLocator(minor_ticks))
+    ax.grid(True, which='minor', linestyle=':', linewidth=0.75, color='gray')
+    
+    ax.set_xticks(custom_ticks)
+    ax.set_xticklabels(custom_labels)
+    ax.set_xlabel('Day Time (hrs)')
+    
+    for rr in sun_range:
+        ax.axvspan(rr[0], rr[1], facecolor='#fffff0')
+fig.tight_layout()
+
+file_name = 'ex_imposed_H2'
+fig.savefig(file_name+'.eps', format='eps', bbox_inches='tight')
+########################################################
+# others
+fig, axes = plt.subplots(1,2,figsize=(15 * 2 / 2.54, 10 * 2 / 2.54))
+
+axes[0].plot(t / 60, np.transpose(np.real(barS0)/np.abs(barS0)))
+axes[0].set_title('Regulation injected power factor')
+axes[0].set_ylim(0.90, 0.94)
+
+for ax in axes.flat:
+    ax.set_xlim(0, t[-1]/60)
+    
+    ax.xaxis.set_major_locator(FixedLocator(custom_ticks))
+    ax.grid(True, which='major', linestyle='-', linewidth=0.75, color='gray')
+    ax.xaxis.set_minor_locator(FixedLocator(minor_ticks))
+    ax.grid(True, which='minor', linestyle=':', linewidth=0.75, color='gray')
+    
+    ax.set_xticks(custom_ticks)
+    ax.set_xticklabels(custom_labels)
+    ax.set_xlabel('Day Time (hrs)')
+    
+    for rr in sun_range:
+        ax.axvspan(rr[0], rr[1], facecolor='#fffff0')
+fig.tight_layout()
+########################################################
+# performance indicators
+print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
+error           = S*(np.real(barS0) - P0ref)
+errorRMS_baseline = np.sqrt(np.mean(error**2))
+print("error RMS baseline [kW]=", errorRMS_baseline )
+
+total_utility_baseline = np.sum(U_Hyd[np.array(indexes_hid)-NPV,-1]/1e6)
+print("Total utility [M$]=", total_utility_baseline )
+
+vH2min = np.min(np.abs(ve[np.array(indexes_hid)-NPV,:]),axis=0)
+mean_vH2min_base = np.mean(vH2min)
+rms_vH2min_base = np.sqrt(np.mean(vH2min**2))
+print("Minimum H2 voltage [p.u.] mean=", mean_vH2min_base )
+print("Minimum H2 voltage [p.u.] rms=", rms_vH2min_base )
+
+P000 = np.real(barS0[0,t<tmax])
+ts_base, idx, lower, upper = tm.settling_time(
+    P000,
+    P0ref,
+    dt=T,
+    band=P0band
+)
+print("Settling tim [min]=", ts_base)
+########################################################
+#tables for Latex
+print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
+latex_code = ct.numpy_to_wide_latex_table(
+    lines_info,
+    caption="Line impedances of exemple system [$\Omega$]",
+    label="tab:impedances",
+    precision=3
+)
+print(latex_code)
+print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
+latex_code = ct.nodes_ratings_table_horizontal(
+    installed*S,
+    indexes_hid,
+    indexes_sol,
+    indexes_lds,
+    ("node", "H2", "node", "PV", "node", "Load"),
+    precision=0,
+    caption="Installed capacity at nodes [kVA]: Hydrogen electrolisys (H2), Photo-voltaic generation (PV), and Load.",
+    label="tab:nodes"
+)
+print(latex_code)
+print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
+data = np.array([
+    [errorRMS_lineal, total_utility_lineal, mean_vH2min_lineal],
+    [errorRMS_convex, total_utility_convex, mean_vH2min_convex],
+    [errorRMS_baseline, total_utility_baseline, mean_vH2min_base]
+])
+
+row_names = [
+    "Lineal pricing",
+    "Convex pricing",
+    "Centralized decission"
+]
+
+column_headers = [
+    "a)",
+    "b)",
+    "c)"
+]
+
+precisions = [0, 3, 4]
+
+latex_code = ct.performance_table(
+    data,
+    row_names,
+    column_headers,
+    precisions,
+    caption="Performance of control strategies. a) RMS error [kW], b) Joint H2 profit [M\$], c) Mean minimum voltage at H2 nodes [p.u.]",
+    label="tab:performance"
+)
+
+print(latex_code)
+print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')

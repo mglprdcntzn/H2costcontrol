@@ -19,7 +19,8 @@ def DG_circuit(N, Mean, dev):
 #############################################################
 def impendances_circuit(lines, N, NPV):
     ###############
-    NB = lines.shape[0] #num of branches
+    NB = lines.shape[0] #num of 
+    lines_info = np.zeros((NB, 3),dtype='object') #an array to save the info
     ###############
     Rperkm = 0.2870120
     Xperkm = 0.5508298
@@ -45,7 +46,17 @@ def impendances_circuit(lines, N, NPV):
         #incidences
         D[ll, origin] = -1
         D[ll, destiny] = 1
+        #lineinfo
+        if origin<destiny:
+            lines_info[ll,0] = origin
+            lines_info[ll,1] = destiny
+        else:
+            lines_info[ll,1] = origin
+            lines_info[ll,0] = destiny
+        lines_info[ll,2] = Z
     
+    #sort info table
+    lines_info = lines_info[np.lexsort((lines_info[:, 1], lines_info[:, 0]))]
     #admitances matrix
     hatY = np.transpose(D) @ W @ D
     
@@ -54,7 +65,7 @@ def impendances_circuit(lines, N, NPV):
     Y0  = hatY[NPV:N, 0:NPV]
     Y   = hatY[NPV:N, NPV:N]
     
-    return Y, Y0, Y00
+    return Y, Y0, Y00, lines_info
 #############################################################
 def print_circuit(nodes, lines, plt_name,indexes_reg,indexes_sol,indexes_hid,indexes_load):
     #prepare figure
@@ -69,7 +80,26 @@ def print_circuit(nodes, lines, plt_name,indexes_reg,indexes_sol,indexes_hid,ind
     ax.scatter(nodes[indexes_sol, 0], nodes[indexes_sol, 1]+yoffset, color='orange',zorder=3)
     ax.scatter(nodes[indexes_hid, 0], nodes[indexes_hid, 1]+yoffset, color='blue',zorder=3)
     ax.scatter(nodes[indexes_load, 0], nodes[indexes_load, 1]+yoffset, color='black',zorder=3)
-        
+    #nodes labels
+    dx = 0.04
+    dy = 0.04
+    for idx in indexes_reg:
+        x = nodes[idx, 0]
+        y = nodes[idx, 1] + yoffset
+        ax.text(x+dx,y+dy, str(idx), fontsize=9, ha='left', va='bottom',color='brown')
+    for idx in indexes_sol:
+        x = nodes[idx, 0]
+        y = nodes[idx, 1] + yoffset
+        ax.text(x+dx,y+dy, str(idx), fontsize=9, ha='left', va='bottom',color='orange')
+    for idx in indexes_hid:
+        x = nodes[idx, 0]
+        y = nodes[idx, 1] + yoffset
+        ax.text(x+dx,y+dy, str(idx), fontsize=9, ha='left', va='bottom',color='blue')
+    for idx in indexes_load:
+        x = nodes[idx, 0]
+        y = nodes[idx, 1] + yoffset
+        ax.text(x+dx,y+dy, str(idx), fontsize=9, ha='left', va='bottom',color='black')
+    
     #lines
     rows, cols = lines.shape
     for ll in range(0, rows):
@@ -109,21 +139,22 @@ def print_circuit(nodes, lines, plt_name,indexes_reg,indexes_sol,indexes_hid,ind
     ax.plot([scale0x+1000,scale0x+1000], [scale0y+50,scale0y-50], linestyle='-', color='black')
     
     ax.text(scale0x+000, scale0y-70, '0m'  , fontsize=8, ha='center', va='top',color='black') 
-    ax.text(scale0x+500, scale0y-70, '500m', fontsize=8, ha='center', va='top',color='black') 
+    # ax.text(scale0x+500, scale0y-70, '500m', fontsize=8, ha='center', va='top',color='black') 
     ax.text(scale0x+1000, scale0y-70, '1000m', fontsize=8, ha='center', va='top',color='black') 
+    
     #draw dots with legend under scale
     legendx = scale0x
     legendy = scale0y - 500
     
     ax.plot(legendx, legendy, 'o', color='brown')
-    ax.plot(legendx, legendy-250, 'o', color='orange')
-    ax.plot(legendx, legendy-500, 'o', color='blue')
-    ax.plot(legendx, legendy-750, 'o', color='black')
+    ax.plot(legendx, legendy-260, 'o', color='orange')
+    ax.plot(legendx, legendy-520, 'o', color='blue')
+    ax.plot(legendx, legendy-780, 'o', color='black')
     
-    ax.text(legendx+70, legendy, ': Regulation nodes', fontsize=12, ha='left', va='center',color='black') 
-    ax.text(legendx+70, legendy-250, ': Photo-voltaic generation nodes', fontsize=12, ha='left', va='center',color='black') 
-    ax.text(legendx+70, legendy-500, ': Hydrogen production nodes', fontsize=12, ha='left', va='center',color='black') 
-    ax.text(legendx+70, legendy-750, ': Industrial load nodes', fontsize=12, ha='left', va='center',color='black') 
+    ax.text(legendx+90, legendy, ': Regulation nodes', fontsize=12, ha='left', va='center',color='black') 
+    ax.text(legendx+90, legendy-260, ': Photo-voltaic generation nodes', fontsize=12, ha='left', va='center',color='black') 
+    ax.text(legendx+90, legendy-520, ': Hydrogen production nodes', fontsize=12, ha='left', va='center',color='black') 
+    ax.text(legendx+90, legendy-780, ': Industrial load nodes', fontsize=12, ha='left', va='center',color='black') 
     
     ax.set_frame_on(False)
     plt.tight_layout()
@@ -139,9 +170,9 @@ def create_tree_circuit(N, Dmean, Dmin):
     nodes = np.zeros((N, 2))  #x,y
     lines = np.empty((0, 3))#norigin,ndestiny,distance
 
-    breakprob  = 0.5
+    breakprob  = 0.50
 
-    maxangle   = 20*math.pi/180
+    maxangle   = 10*math.pi/180
     breakangle = 0
     std_dev    = (Dmean-Dmin)/2
     
@@ -149,11 +180,18 @@ def create_tree_circuit(N, Dmean, Dmin):
     #run over the nodes
     for ii in range(N-1):
         ndes = ii + 1
-        if random.random() < breakprob:
-            nor        = random.randint(0, ndes-1)
-            breakangle = random.choice([-1,0,1])*90*math.pi/180 # random.randint(0, 3)*90*math.pi/180
-        # else:
-        #     breakangle = 0
+        
+        if nor>0:
+            if random.random() < breakprob:
+                nor        = random.randint(1, ndes-1)
+                if breakangle<0:
+                    breakangle = random.choice([0,1])*90*math.pi/180 # random.randint(0, 3)*90*math.pi/180
+                elif breakangle>0:
+                    breakangle = random.choice([-1,0])*90*math.pi/180 # random.randint(0, 3)*90*math.pi/180
+                else:
+                    breakangle = 90*math.pi/180#random.choice([-1,1])*90*math.pi/180 # random.randint(0, 3)*90*math.pi/180
+            # else:
+            #     breakangle = 0
             
         xor  = nodes[nor,0]
         yor  = nodes[nor,1]
@@ -161,7 +199,9 @@ def create_tree_circuit(N, Dmean, Dmin):
         searching = True
         while searching:
             theta = random.random() * 2 * maxangle - maxangle + breakangle
-            dist  = random.gauss(Dmean, std_dev)
+            
+            factor = -2*(breakangle/math.pi)**2 + 3/2
+            dist  = random.gauss(Dmean*factor, std_dev)
             
             x = xor +  dist*np.cos(theta)
             y = yor +  dist*np.sin(theta)
@@ -180,8 +220,8 @@ def create_tree_circuit(N, Dmean, Dmin):
                 searching = False
                 break
             else:
-                nor        = random.randint(0, ndes-1)
-                breakangle = random.choice([-1,0, 1])*90*math.pi/180 #random.randint(0, 3)*90*math.pi/180
+                nor        = random.randint(1, ndes-1)
+                breakangle = random.choice([-1,0,0,1])*90*math.pi/180 #random.randint(0, 3)*90*math.pi/180
                 
                 xor        = nodes[nor,0]
                 yor        = nodes[nor,1]
@@ -360,12 +400,420 @@ def reorder_nodes(nodes, lines, indexes_reg,indexes_sol,indexes_hid,indexes_lds)
     return new_nodes, new_lines, new_indexes_reg, new_indexes_sol, new_indexes_hid, new_indexes_lds
 
 
+#############################################################
+def numpy_to_wide_latex_table(arr, caption=None, label=None, precision=4):
+    """
+    Convert a NumPy array into a wide LaTeX table with:
+      - an index column
+      - 3 repeated blocks across the page
+      - each block contains: Index | Col1 | Col2 | Complex
+
+    Parameters
+    ----------
+    arr : np.ndarray
+        Shape (N, 3)
+        First two columns: integers
+        Third column: complex numbers
+        
+    Function by chatgpt
+    """
+
+    nrows = len(arr)
+
+    # Split rows into 3 vertical sections
+    chunk_size = math.ceil(nrows / 3)
+
+    chunks = [
+        arr[i:i + chunk_size]
+        for i in range(0, nrows, chunk_size)
+    ]
+
+    # Ensure exactly 3 chunks
+    while len(chunks) < 3:
+        chunks.append([])
+
+    lines = []
+
+    lines.append(r"\begin{table*}[h]")
+    lines.append(r"\centering")
+    lines.append(r"\small")
+    
+    if caption:
+        lines.append(rf"\caption{{{caption}}}")
+
+    if label:
+        lines.append(rf"\label{{{label}}}")
+    
+    lines.append(r"\resizebox{1.00\columnwidth}{!}{")
+    lines.append(r"\begin{tabular}{c c c c | c c c c | c c c c}")
+    lines.append(r"\hline")
+
+    # Header
+    header = (
+        r"Line & $i$ & $j$ & $Z_{ij}$ & "
+        r"Line & $i$ & $j$ & $Z_{ij}$ & "
+        r"Line & $i$ & $j$ & $Z_{ij}$ \\"
+    )
+    lines.append(header)
+
+    lines.append(r"\hline")
+
+    # Maximum rows among chunks
+    max_rows = max(len(c) for c in chunks)
+
+    for r in range(max_rows):
+
+        row_entries = []
+
+        for chunk_id, chunk in enumerate(chunks):
+
+            if r < len(chunk):
+
+                global_index = chunk_id * chunk_size + r + 1
+
+                a = int(chunk[r][0])
+                b = int(chunk[r][1])
+
+                z = complex(chunk[r][2])
+
+                real = round(z.real, precision)
+                imag = round(z.imag, precision)
+
+                if imag >= 0:
+                    z_str = f"${real}+{imag}\jhat$"
+                else:
+                    z_str = f"${real}-{abs(imag)}\jhat$"
+
+                row_entries.extend([
+                    str(global_index),
+                    str(a),
+                    str(b),
+                    z_str
+                ])
+
+            else:
+                # Empty cells if chunk shorter
+                row_entries.extend(["", "", "", ""])
+
+        lines.append(" & ".join(row_entries) + r" \\")
+
+    lines.append(r"\hline")
+    lines.append(r"\end{tabular}")
+    lines.append(r"}")
+
+    lines.append(r"\end{table*}")
+
+    return "\n".join(lines)
+
+#############################################################
+def nodes_ratings_table(
+    vector,
+    indexes_1,
+    indexes_2,
+    indexes_3,
+    headers,
+    precision=5,
+    caption=None,
+    label=None
+):
+    """
+    Create a LaTeX table with 3 horizontal chunks.
+
+    Each chunk has:
+        index | corresponding floating-point value
+
+    Parameters
+    ----------
+    vector : np.ndarray
+        Vector containing floating-point values.
+
+    indexes_1, indexes_2, indexes_3 : iterable
+        Index sets.
+
+    Returns
+    -------
+    str
+        LaTeX table code.
+        
+    Function by chatgpt
+    """
+
+    chunks = [indexes_1, indexes_2, indexes_3]
+
+    max_len = max(len(c) for c in chunks)
+
+    lines = []
+
+    lines.append(r"\begin{table*}[h]")
+    lines.append(r"\centering")
+    lines.append(r"\small")
+    if caption:
+        lines.append(rf"\caption{{{caption}}}")
+
+    if label:
+        lines.append(rf"\label{{{label}}}")
+    lines.append(r"\begin{tabular}{c c | c c | c c}")
+    lines.append(r"\hline")
+
+    # Header
+    lines.append(
+        rf"{headers[0]} & {headers[1]} & "
+        rf"{headers[2]} & {headers[3]} & "
+        rf"{headers[4]} & {headers[5]} \\"
+    )
+
+    lines.append(r"\hline")
+
+    for i in range(max_len):
+
+        row_entries = []
+
+        for chunk in chunks:
+
+            if i < len(chunk):
+
+                idx = int(chunk[i])
+                value = float(np.asarray(vector[idx]).squeeze())
+
+                row_entries.extend([
+                    str(idx),
+                    f"{value:.{precision}f}"
+                ])
+
+            else:
+                row_entries.extend(["", ""])
+
+        lines.append(" & ".join(row_entries) + r" \\")
+
+    lines.append(r"\hline")
+    lines.append(r"\end{tabular}")
 
 
+    lines.append(r"\end{table*}")
+
+    return "\n".join(lines)
+
+#############################################################
+def nodes_ratings_table_horizontal(
+    vector,
+    indexes_1,
+    indexes_2,
+    indexes_3,
+    headers,
+    precision=5,
+    caption=None,
+    label=None
+):
+    """
+    Create a LaTeX table where each chunk is horizontal.
+
+    Structure:
+
+        Header1 | idx1 idx2 idx3 ...
+        Value1  | val1 val2 val3 ...
+
+        Header2 | ...
+        Value2  | ...
+
+        Header3 | ...
+        Value3  | ...
+
+    Parameters
+    ----------
+    vector : np.ndarray
+        Vector containing floating-point values.
+
+    indexes_1, indexes_2, indexes_3 : iterable
+        Index sets.
+
+    headers : list[str]
+        Must contain 6 strings:
+            [idx_header1, value_header1,
+             idx_header2, value_header2,
+             idx_header3, value_header3]
+    """
+
+    chunks = [indexes_1, indexes_2, indexes_3]
+
+    # Largest chunk determines width
+    max_len = max(len(c) for c in chunks)
+
+    # Table format:
+    # first column for labels + data columns
+    col_format = "c | " + " ".join(["c"] * max_len)
+
+    lines = []
+
+    lines.append(r"\begin{table*}[h]")
+    lines.append(r"\centering")
+    lines.append(r"\small")
+
+    if caption:
+        lines.append(rf"\caption{{{caption}}}")
+
+    if label:
+        lines.append(rf"\label{{{label}}}")
+
+    lines.append(r"\resizebox{1.00\columnwidth}{!}{")
+    lines.append(rf"\begin{{tabular}}{{{col_format}}}")
+    lines.append(r"\hline")
+
+    # =========================================================
+    # Build each chunk horizontally
+    # =========================================================
+
+    for k, chunk in enumerate(chunks):
+
+        idx_header = headers[2*k]
+        val_header = headers[2*k + 1]
+
+        # ---------------------------
+        # Index row
+        # ---------------------------
+
+        idx_row = [idx_header]
+
+        for idx in chunk:
+            idx_row.append(str(int(idx)))
+
+        # Fill remaining empty cells
+        idx_row.extend([""] * (max_len - len(chunk)))
+
+        lines.append(" & ".join(idx_row) + r" \\")
+
+        # ---------------------------
+        # Value row
+        # ---------------------------
+
+        val_row = [val_header]
+
+        for idx in chunk:
+
+            value = float(np.asarray(vector[idx]).squeeze())
+
+            val_row.append(
+                f"{value:.{precision}f}"
+            )
+
+        val_row.extend([""] * (max_len - len(chunk)))
+
+        lines.append(" & ".join(val_row) + r" \\")
+
+        lines.append(r"\hline")
+
+    lines.append(r"\end{tabular}")
+    lines.append(r"}")
+    lines.append(r"\end{table*}")
+
+    return "\n".join(lines)
+#############################################################
+def performance_table(
+    data,
+    row_names,
+    column_headers,
+    precisions,
+    caption=None,
+    label=None
+):
+    """
+    Generate a LaTeX table with:
+        - header row
+        - first column = row names
+        - remaining columns = floating-point values
+        - individual precision for each column
+
+    Parameters
+    ----------
+    data : np.ndarray
+        Shape (3, N)
+
+    row_names : list[str]
+        Names of the 3 rows.
+
+    column_headers : list[str]
+        Headers for columns 2..N+1.
+
+    precisions : list[int]
+        Decimal precision for each data column.
+
+    Returns
+    -------
+    str
+        LaTeX table code.
+        
+    Function by chatgpt
+    """
+
+    data = np.asarray(data)
+
+    if data.shape[0] != 3:
+        raise ValueError("data must have exactly 3 rows")
+
+    ncols = data.shape[1]
+
+    if len(row_names) != 3:
+        raise ValueError("row_names must contain exactly 3 strings")
+
+    if len(column_headers) != ncols:
+        raise ValueError(
+            "column_headers length must match number of columns"
+        )
+
+    if len(precisions) != ncols:
+        raise ValueError(
+            "precisions length must match number of columns"
+        )
 
 
+    # Table format:
+    # first column left aligned, rest centered
+    col_format = "l " + " ".join(["c"] * ncols)
 
+    lines = []
 
+    lines.append(r"\begin{table}[h!]")
+    lines.append(r"\centering")
+    lines.append(r"\small")
+    
+    if caption:
+        lines.append(rf"\caption{{{caption}}}")
 
+    if label:
+        lines.append(rf"\label{{{label}}}")
 
+    lines.append(rf"\begin{{tabular}}{{{col_format}}}")
+    lines.append(r"\hline")
 
+    # Header row
+    header_entries = [""] + list(column_headers)
+
+    lines.append(
+        " & ".join(header_entries) + r" \\"
+    )
+
+    lines.append(r"\hline")
+
+    # Data rows
+    for i in range(3):
+
+        row_entries = [row_names[i]]
+
+        for j in range(ncols):
+
+            value = float(data[i, j])
+            prec = precisions[j]
+
+            row_entries.append(
+                f"{value:.{prec}f}"
+            )
+
+        lines.append(
+            " & ".join(row_entries) + r" \\"
+        )
+
+    lines.append(r"\hline")
+    lines.append(r"\end{tabular}")
+
+    lines.append(r"\end{table}")
+
+    return "\n".join(lines)

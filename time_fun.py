@@ -125,3 +125,61 @@ def model_interpole(model, tt):
     interpol = np.clip(interpol, 0, None)  #eliminate negatives
     
     return interpol
+
+#############################################################
+def settling_time(P0, P0ref, dt=1.0, band=0.025):
+    """
+    Compute the settling time of a signal.
+
+    The settling time is defined as the first instant after which
+    the signal remains permanently within the tolerance band.
+
+    Parameters
+    ----------
+    P0 : np.ndarray
+        Signal values at successive time instants.
+
+    P0ref : float
+        Reference/final value.
+
+    dt : float
+        Time step between samples.
+
+    band : float
+        Relative tolerance band.
+        Default = 0.025 (2.5%)
+
+    Returns
+    -------
+    ts : float
+        Settling time.
+
+    idx : int
+        Index corresponding to settling time.
+
+    lower, upper : float
+        Bounds of the settling band.
+        
+        
+    function by ChatGPT
+    """
+
+    P0 = np.asarray(P0).flatten()
+
+    # Tolerance band
+    lower = P0ref * (1 - band)
+    upper = P0ref * (1 + band)
+
+    # Check from each point onward
+    for i in range(len(P0)):
+
+        remaining_signal = P0[i:]
+
+        if np.all((remaining_signal >= lower) &
+                  (remaining_signal <= upper)):
+
+            ts = i * dt
+            return ts, i, lower, upper
+
+    # Signal never settles
+    return np.infty, np.infty, lower, upper
