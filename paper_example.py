@@ -125,7 +125,7 @@ Phi0  = np.zeros((NPQ, NPQ))
 Vinic = R0 @ expm(1j * Phi0)
 ########################################################
 #Control periods
-T0   = 10 #time for Ctrl of Regulation nodes
+T0   = 10 #10 #time for Ctrl of Regulation nodes
 n0   = np.floor(T0/T)
 ndev = 2
 
@@ -684,9 +684,9 @@ MMM   = cp.bmat([
 ])
 
 constraints = [
-    alfa >> 1e-6,   # alfa ≻ 0
-    PPP  >> 1e-6 * np.eye(nP),   # P ≻ 0
-    MMM  << -1e-6 * np.eye(nP+1) # LMI condition
+    alfa >> 1e-2,   # alfa ≻ 0
+    PPP  >> 1e-2 * np.eye(nP),   # P ≻ 0
+    MMM  << -1e-2 * np.eye(nP+1) # LMI condition
 ]
 # prob = cp.Problem(cp.Minimize(0), constraints)
 prob = cp.Problem(cp.Minimize(cp.trace(PPP)), constraints)
@@ -697,8 +697,14 @@ print("Status:", prob.status)
 print("P =", PPP.value)
 print("alfa =", alfa.value)
 
-print("eig(P) =", np.linalg.eigvals(PPP.value) )
+if not(prob.status=='infeasible'):
+    print("eig(P) =", np.linalg.eigvals(PPP.value) )
 print("eig(G0) =", np.linalg.eigvals(GGG0) )
+    
+# print(prob.value)
+# for c in prob.constraints:
+#     print(c.violation())
+    
 print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
 #discrete time analysis
 T000 = T0
@@ -717,9 +723,9 @@ MMM   = cp.bmat([
 ])
 
 constraints = [
-    beta >> 1e-6,   # beta ≻ 0
-    QQQ  >> 1e-6 * np.eye(nP),   # Q ≻ 0
-    MMM  << -1e-6 * np.eye(2*nP+1) # LMI condition
+    beta >> 1e-2,   # beta ≻ 0
+    QQQ  >> 1e-2 * np.eye(nP),   # Q ≻ 0
+    MMM  << -1e-2 * np.eye(2*nP+1) # LMI condition
 ]
 # prob = cp.Problem(cp.Minimize(0), constraints)
 prob = cp.Problem(cp.Minimize(cp.trace(QQQ)), constraints)
@@ -730,8 +736,10 @@ print("Status:", prob.status)
 print("Q =", QQQ.value)
 print("beta =", beta.value)
 
-print("eig(Q) =", np.linalg.eigvals(QQQ.value) )
+if not(prob.status=='infeasible'):
+    print("eig(Q) =", np.linalg.eigvals(QQQ.value) )
 print("eig(H0) =", np.linalg.eigvals(HHH0) )
+print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
 ########################################################
 #plot quantities
 ########################################################
@@ -1197,3 +1205,273 @@ latex_code = ct.performance_table(
 
 print(latex_code)
 print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
+
+########################################################
+# H2 convex cost with DESTABILIZING ctrl
+print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
+print("Convex H2 cost - destabilizing ctrl")
+print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
+########################################################
+K = 10#3
+L = 21#21
+c = 1/40 #1/25
+########################################################
+#initial conditions for NR iterations on PQ nodes
+Vinic = R0 @ expm(1j * Phi0)
+########################################################
+#prefill vectors and matrices
+ve        = np.zeros((NPQ, nn), dtype=complex) #voltage at PQ nodes
+
+barS0     = np.zeros((NPV, nn), dtype=complex)
+
+P_lds     = np.zeros((NPQ, nn))
+P_Hyd     = np.zeros((NPQ, nn))
+Q_lds     = np.zeros((NPQ, nn))
+Q_Hyd     = np.zeros((NPQ, nn))
+
+P_Hyd_ref  = np.zeros((NPQ, 1))
+fp_Hyd_ref = 0.99*np.ones((NPQ, 1))
+
+cH2       = np.zeros((NPV,nn+1))
+cH2old    = 0.000
+
+uu       = np.zeros((NPV,nn+1))
+uuold    = 0.0
+uuoldold = uuold*1
+Duu      = 0.0
+Duuold   = Duu*1
+
+cant    = np.zeros((Nhid,1))
+cantant = np.zeros((Nhid,1))
+ekk     = 0
+
+E_Hyd     = np.zeros((NPQ, nn+1))
+U_Hyd     = np.zeros((NPQ, nn+1))
+
+XXX        = np.zeros((NPQ,NPQ))
+aaa        = np.zeros(nn, dtype=complex)
+bbb        = np.zeros(nn, dtype=complex)
+########################################################
+#loop through time
+for kk in range(nn):
+    ##################################
+    # instante
+    tt = t[kk]
+    if np.abs(tt) <= T/2:
+        kinit = kk
+    print(f'\033[KProgress: {int(np.round(100*kk/nn))}%            ', end='\r', flush=True)
+    ##################################
+    # Hydrogen production
+    for node in indexes_hid:
+        ii            = node - NPV
+        Sinstall      = installed[node]
+        
+        fpSii         = fp_Hyd_ref[ii]
+        
+        Pnew          = P_Hyd_ref[ii]
+        Pnew          = min(Sinstall,Pnew)
+        Pnew          = max(0,Pnew)
+        
+        XXX[ii,ii]    = np.sqrt(fpSii**-2 - 1)
+        
+        P_Hyd[ii,kk]  = Pnew
+        Q_Hyd[ii,kk]  = P_Hyd[ii,kk]*XXX[ii,ii]
+        
+        rho            = cH2[0,kk]
+        E_Hyd[ii,kk+1] = E_Hyd[ii,kk] + eta[ii]*P_Hyd[ii,kk]*T
+        U_Hyd[ii,kk+1] = U_Hyd[ii,kk] + eta[ii]*pH2*S*P_Hyd[ii,kk]*T - rho*((S*P_Hyd[ii,kk]*T)**2)
+    ##################################
+    # Define quantities for NR
+    barYload = np.diag(baryLoad[:,kk].flatten())
+    barSant  = barS
+    barS     = np.diag(P_Sun[:,kk]+1j*Q_Sun[:,kk] - P_Hyd[:,kk] - 1j*Q_Hyd[:,kk]  )
+    h0       = (np.conj(barY0)@ve0[:,kk]).reshape((NPQ,1))
+    #################################
+    # NR for voltage in PQ nodes
+    vvv      = tm.NRI(barY, h0, barS, barYload, Vinic, itmax, prec)
+    ve[:,kk] = vvv*1
+    VVV      = np.diag(vvv)
+    Vinic    = VVV*1
+    #################################
+    # Powers depending on voltages
+    Sload       = VVV@np.conj(barYload@vvv)
+    P_lds[:,kk] = np.real(Sload)
+    Q_lds[:,kk] = np.imag(Sload)
+    
+    V0          = np.diag(ve0[:,kk])
+    barS0[:,kk] = V0@np.conj(barY00@ve0[:,kk]) + V0@np.conj(barY0.T@vvv)
+    #################################
+    #matrices for analysis
+    AAA = np.conj(diagbarY0) + np.diag(np.conj(barY@vvv))
+    BBB = VVV@np.conj(barY)
+    
+    FFF = np.linalg.inv(BBB)@AAA
+    HHH = np.linalg.inv(np.eye(NPQ,NPQ) - FFF@np.conj(FFF) )@np.linalg.inv(BBB)
+    
+    MMM = np.block( [[-np.conj(FFF)@HHH, np.conj(HHH)],[HHH, -FFF@np.conj(HHH)]]  )
+       
+    mmm = 0.5*np.ones((1,NPQ))@np.block([diagbarY0,np.conj(diagbarY0)])@MMM
+        
+    IIIXXX = np.block([[np.eye(NPQ,NPQ) + 1j*XXX],[ np.eye(NPQ,NPQ) - 1j*XXX]])
+    
+    aaa[kk] = -0.5*pH2*mmm@IIIXXX@longeta/(c*T0*S)
+    
+    dbarS = (barS - barSant)@np.ones((NPQ,1))/T
+    if kk==0:
+        dbarS = dbarS*0
+
+    bbb[kk] = mmm@np.block([[dbarS],[np.conj(dbarS)]])
+    #################################
+    # Cost control at regulation nodes
+    for ii in range(NPV):
+        node            = indexes_reg[ii]
+        cH2[node,kk+1]  = cH2old
+        uu[node,kk+1]   = uuold
+        
+        rr0 = (kk-delay0[ii])%ctrlsteps0[ii]
+        if rr0 == 0:
+            Skk          = barS0[node,kk]
+            Pkk          = np.real(Skk)
+            
+            ekk          = P0ref-Pkk
+            De           = ekk - eant
+            
+            Duu          = uuold-uuoldold
+            
+            uunew        = uuold + (T0**2)*K*ekk  + Duu + L*T0*De
+                        
+            #communicate as cost
+            cH2old         = max(0.00000000001,c/uunew)
+            cH2[node,kk+1] = cH2old
+            uu[node,kk+1]  = uunew
+            
+            #update old Preq
+            uuoldold      = uuold
+            uuold         = uunew
+            Duuold        = Duu
+            eant          = ekk
+    #################################
+    # Cost control at H2 nodes
+    for ii in range(Nhid):
+        rr1 = (kk-delay1[ii])%ctrlsteps1[ii]
+        rho = cH2[0,kk]
+        if rho != cant[ii]:
+            node            = indexes_hid[ii] - NPV
+            
+            P_Hyd_ref[node] = 0.5*pH2*eta[ii]/(rho*T0*S)
+            cant[ii]        = rho
+print(' ')
+########################################################
+#LMI stability analysis from an estimation of aaa
+aaa0    = np.real(aaa[t>0]).mean()
+epsilon = 0.100*np.abs(aaa0) #10%
+epdraw  = 0.001*np.abs(aaa0)
+print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
+print("LMI convergence test")
+print(f"  aaa0 = {aaa0:.5f}")
+print(f"  epsilon/aaa0 = {epsilon/aaa0:.5f}")
+print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
+#continous time analysis
+GGG0 = np.block( [[0,1],[-aaa0*K, -aaa0*L]]  )
+mmm  = np.block( [[0],[1]]  )
+nnn  = np.block( [[-K],[-L]]  )
+
+nP    = GGG0.shape[0]
+PPP   = cp.Variable((nP, nP), symmetric=True)
+alfa  = cp.Variable((1,1),nonneg=True)
+MMM   = cp.bmat([
+    [GGG0.T @ PPP + PPP @ GGG0 + alfa*nnn@nnn.T,       epsilon*PPP @ mmm],
+    [epsilon*mmm.T @ PPP,           -alfa]
+])
+
+constraints = [
+    alfa >> 1e-2,   # alfa ≻ 0
+    PPP  >> 1e-2 * np.eye(nP),   # P ≻ 0
+    MMM  << -1e-2 * np.eye(nP+1) # LMI condition
+]
+# prob = cp.Problem(cp.Minimize(0), constraints)
+prob = cp.Problem(cp.Minimize(cp.trace(PPP)), constraints)
+
+prob.solve(solver=cp.SCS)
+
+print("Status:", prob.status)
+print("P =", PPP.value)
+print("alfa =", alfa.value)
+
+if not(prob.status=='infeasible'):
+    print("eig(P) =", np.linalg.eigvals(PPP.value) )
+print("eig(G0) =", np.linalg.eigvals(GGG0) )
+
+# print(prob.value)    
+# for c in prob.constraints:
+#     print(c.violation())
+print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
+#discrete time analysis
+T000 = T0
+HHH0 = np.block( [[2-aaa0*T000*(T000*K +L), -1+aaa0*L*T000],[1, 0]]  )
+mmm  = np.block( [[1],[0]]  )
+nnn  = np.block( [[-T000*(T000*K + L)],[L*T000]]  )
+
+nP    = HHH0.shape[0]
+QQQ   = cp.Variable((nP, nP), symmetric=True)
+beta  = cp.Variable((1,1),nonneg=True)
+ZZZ   = np.zeros((nP,1))
+MMM   = cp.bmat([
+    [-QQQ + (epsilon**2)*beta*(nnn@nnn.T),  HHH0.T@QQQ, ZZZ ],
+    [ QQQ@HHH0, -QQQ, QQQ@mmm],
+    [ZZZ.T, mmm.T@QQQ, -beta]
+])
+
+constraints = [
+    beta >> 1e-2,   # beta ≻ 0
+    QQQ  >> 1e-2 * np.eye(nP),   # Q ≻ 0
+    MMM  << -1e-2 * np.eye(2*nP+1) # LMI condition
+]
+# prob = cp.Problem(cp.Minimize(0), constraints)
+prob = cp.Problem(cp.Minimize(cp.trace(QQQ)), constraints)
+
+prob.solve(solver=cp.SCS)
+
+print("Status:", prob.status)
+print("Q =", QQQ.value)
+print("beta =", beta.value)
+
+if not(prob.status=='infeasible'):
+    print("eig(Q) =", np.linalg.eigvals(QQQ.value) )
+print("eig(H0) =", np.linalg.eigvals(HHH0) )
+print('%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%')
+
+########################################################
+#plot quantities
+fig, axes = plt.subplots(1,2,figsize=(15 * 2 / 2.54, 10 * 2 / 2.54))
+
+axes[0].plot(t[t>0] / 60, np.transpose(np.real(aaa[t>0])))
+axes[0].plot(np.array([t[0],t[-1]]) / 60, np.real(aaa0.flatten())*np.array([1,1]), linestyle='--',color='red')
+axes[0].plot(np.array([t[0],t[-1]]) / 60, np.real(aaa0+ epdraw).flatten()*np.array([1,1]), linestyle=':',color='red')
+axes[0].plot(np.array([t[0],t[-1]]) / 60, np.real(aaa0- epdraw).flatten()*np.array([1,1]), linestyle=':',color='red')
+axes[0].set_title(r'$a = a_0 + \Delta a$')
+
+axes[0].text(16, aaa0+ epdraw*1.3,  f"(1 + {epdraw/aaa0:.3f}) $a_0$", fontsize=12, color='red', ha='left', va='bottom', rotation=0)
+axes[0].text(16, aaa0- epdraw*1.3,  f"(1 - {epdraw/aaa0:.3f}) $a_0$", fontsize=12, color='red', ha='left', va='top', rotation=0)
+
+axes[1].plot(t / 60, np.transpose(S*P_Hyd[np.array(indexes_hid)-NPV,:]))
+axes[1].set_title('Hydrogen consumed power (kW)')
+
+for ax in axes.flat:
+    ax.set_xlim(0, t[-1]/60)
+    
+    ax.xaxis.set_major_locator(FixedLocator(custom_ticks))
+    ax.grid(True, which='major', linestyle='-', linewidth=0.75, color='gray')
+    ax.xaxis.set_minor_locator(FixedLocator(minor_ticks))
+    ax.grid(True, which='minor', linestyle=':', linewidth=0.75, color='gray')
+    
+    ax.set_xticks(custom_ticks)
+    ax.set_xticklabels(custom_labels)
+    ax.set_xlabel('Day Time (hrs)')
+
+    for rr in sun_range:
+        ax.axvspan(rr[0], rr[1], facecolor='#fffff0')
+fig.tight_layout()
+
+file_name = 'matrixanalysis_unstable'
+fig.savefig(file_name+'.eps', format='eps', bbox_inches='tight')
